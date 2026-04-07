@@ -31,11 +31,10 @@ MAX_ACTIVE_LASERS = 3
 LASER_THICKNESS = 30        
 LASER_SPAWN_INTERVAL = 180
 
-# --- 슬로우 게이지 설정 ---
-MAX_SLOW_GAUGE = 180
-SLOW_CONSUME_RATE = 1
-SLOW_RECHARGE_RATE = 0.5
-SLOW_TIME_MULTIPLIER = 0.3 # 시간이 30% 속도로 느려짐
+# --- 실드 게이지 설정 ---
+MAX_SHIELD_GAUGE = 180
+SHIELD_CONSUME_RATE = 1
+SHIELD_RECHARGE_RATE = 0.5
 
 # --- 페이즈 구간 설정 ---
 PHASE_MID_THRESHOLD = 50      
@@ -49,7 +48,6 @@ BLUE   = (50,  120, 220)
 RED    = (220, 50,  50)
 YELLOW = (240, 200, 0)
 GRAY   = (40,  40,  40)
-CYAN   = (0,   255, 255) # 슬로우 게이지용 색상
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("Lava Drops")
@@ -57,7 +55,7 @@ clock = pygame.time.Clock()
 
 font = get_korean_font(36)
 font_big = get_korean_font(72)
-font_small = get_korean_font(28) 
+font_small = get_korean_font(28) # 조작법 가이드용 작은 폰트 추가
 
 LEVELS = [
     {"min_speed": 3, "max_speed": 5,  "spawn": 40, "label": "Lv.1"},
@@ -80,14 +78,16 @@ def main_menu():
     start_text = font.render("Press SPACE to Start", True, YELLOW)
     quit_text = font.render("Press Q to Quit", True, WHITE)
     
-    # 조작법 텍스트 (회피기 -> 시간 감속)
-    move_text = font_small.render("이동기 : ↑ ← ↓ →  or  WASD", True, WHITE)
-    dodge_text = font_small.render("시간 감속 : SHIFT", True, CYAN)
+    # 조작법 텍스트
+#    move_text = font_small.render("이동기 : 화살표 or  WASD", True, WHITE)
+    dodge_text = font_small.render("회피기 : SHIFT", True, WHITE)
     
+    # 기존 UI들을 전체적으로 위로 배치
     screen.blit(title_text, title_text.get_rect(center=(cx, cy - 120)))
     screen.blit(start_text, start_text.get_rect(center=(cx, cy - 20)))
     screen.blit(quit_text, quit_text.get_rect(center=(cx, cy + 30)))
     
+    # 조작법을 아래에 배치
     screen.blit(move_text, move_text.get_rect(center=(cx, cy + 100)))
     screen.blit(dodge_text, dodge_text.get_rect(center=(cx, cy + 140)))
     
@@ -168,15 +168,15 @@ def main():
     invincible = 0
     last_phase = 0 
 
-    v_spawn_timer = 0.0
-    h_spawn_timer = 0.0
-    b_spawn_timer = 0.0 
+    v_spawn_timer = 0
+    h_spawn_timer = 0
+    b_spawn_timer = 0 
 
     lasers = []
-    laser_spawn_timer = 0.0
+    laser_spawn_timer = 0
 
-    slow_gauge = float(MAX_SLOW_GAUGE)
-    is_slow_overheated = False
+    shield_gauge = float(MAX_SHIELD_GAUGE)
+    is_shield_overheated = False
 
     shake_timer = 0
     shake_magnitude = 0
@@ -227,24 +227,19 @@ def main():
         mouse_right = mouse_pressed[2]
 
         shift_held = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] or mouse_right
-        is_slow_active = False
+        is_shield_active = False
         
-        # 슬로우 게이지 로직
-        if shift_held and not is_slow_overheated and slow_gauge > 0:
-            is_slow_active = True
-            slow_gauge -= SLOW_CONSUME_RATE
-            if slow_gauge <= 0:
-                slow_gauge = 0
-                is_slow_overheated = True
+        if shift_held and not is_shield_overheated and shield_gauge > 0:
+            is_shield_active = True
+            shield_gauge -= SHIELD_CONSUME_RATE
+            if shield_gauge <= 0:
+                shield_gauge = 0
+                is_shield_overheated = True
         else:
-            slow_gauge = min(MAX_SLOW_GAUGE, slow_gauge + SLOW_RECHARGE_RATE)
-            if is_slow_overheated and slow_gauge >= MAX_SLOW_GAUGE:
-                is_slow_overheated = False
-                
-        # 시간에 따른 배율 (슬로우 켜지면 0.3, 꺼지면 1.0)
-        time_mult = SLOW_TIME_MULTIPLIER if is_slow_active else 1.0
+            shield_gauge = min(MAX_SHIELD_GAUGE, shield_gauge + SHIELD_RECHARGE_RATE)
+            if is_shield_overheated and shield_gauge >= MAX_SHIELD_GAUGE:
+                is_shield_overheated = False
         
-        # 플레이어 이동 (플레이어는 시간 감속에 면역!)
         if mouse_left:
             mx, my = pygame.mouse.get_pos()
             px_center = player_x + PLAYER_W / 2
@@ -273,9 +268,8 @@ def main():
 
         endless_speed_bonus = (display_score - PHASE_ENDLESS_THRESHOLD) * 0.05 if is_phase_endless else 0
 
-        # 스폰 타이머에도 time_mult 반영 (슬로우 시 적 스폰도 느려짐)
         if shake_timer <= 0:
-            v_spawn_timer += time_mult
+            v_spawn_timer += 1
             base_v_spawn = level_cfg["spawn"]
             if is_phase_last:
                 base_v_spawn *= 4 
@@ -291,14 +285,13 @@ def main():
                 if is_phase_late: speed = max(1, int(speed * 0.5))
                 
                 enemies.append({
-                    "rect": pygame.Rect(x, -ENEMY_H, ENEMY_W, ENEMY_H),
-                    "exact_x": float(x), "exact_y": float(-ENEMY_H), 
+                    "rect": pygame.Rect(x, -ENEMY_H, ENEMY_W, ENEMY_H), 
                     "speed_x": 0, "speed_y": speed,
                     "score_value": 1.0 / width_ratio 
                 })
 
             if is_phase_late:
-                h_spawn_timer += time_mult
+                h_spawn_timer += 1
                 base_h_spawn = level_cfg["spawn"] * 2
                 target_h_spawn = max(1, int(base_h_spawn / height_ratio))
                 
@@ -309,12 +302,12 @@ def main():
                     speed = max(1, int(speed * 0.7)) 
                     
                     if random.choice([True, False]):
-                        enemies.append({"rect": pygame.Rect(-ENEMY_W, y, ENEMY_W, ENEMY_H), "exact_x": float(-ENEMY_W), "exact_y": float(y), "speed_x": speed, "speed_y": 0, "score_value": 1.0 / height_ratio})
+                        enemies.append({"rect": pygame.Rect(-ENEMY_W, y, ENEMY_W, ENEMY_H), "speed_x": speed, "speed_y": 0, "score_value": 1.0 / height_ratio})
                     else:
-                        enemies.append({"rect": pygame.Rect(sw, y, ENEMY_W, ENEMY_H), "exact_x": float(sw), "exact_y": float(y), "speed_x": -speed, "speed_y": 0, "score_value": 1.0 / height_ratio})
+                        enemies.append({"rect": pygame.Rect(sw, y, ENEMY_W, ENEMY_H), "speed_x": -speed, "speed_y": 0, "score_value": 1.0 / height_ratio})
 
             if is_phase_last:
-                b_spawn_timer += time_mult
+                b_spawn_timer += 1
                 base_b_spawn = level_cfg["spawn"] * 2
                 target_b_spawn = max(1, int(base_b_spawn / width_ratio))
                 
@@ -324,10 +317,10 @@ def main():
                     speed = random.randint(level_cfg["min_speed"], level_cfg["max_speed"]) + endless_speed_bonus 
                     speed = max(1, int(speed * 0.6))
                     
-                    enemies.append({"rect": pygame.Rect(x, sh, ENEMY_W, ENEMY_H), "exact_x": float(x), "exact_y": float(sh), "speed_x": 0, "speed_y": -speed, "score_value": 1.0 / width_ratio})
+                    enemies.append({"rect": pygame.Rect(x, sh, ENEMY_W, ENEMY_H), "speed_x": 0, "speed_y": -speed, "score_value": 1.0 / width_ratio})
 
             if is_phase_mid:
-                laser_spawn_timer += time_mult
+                laser_spawn_timer += 1
                 if laser_spawn_timer >= LASER_SPAWN_INTERVAL and len(lasers) < MAX_ACTIVE_LASERS:
                     laser_spawn_timer = 0
                     is_horizontal = random.choice([True, False])
@@ -340,17 +333,13 @@ def main():
 
                     lasers.append({"state": "WARNING", "rect": laser_rect, "timer": LASER_WARNING_DURATION})
 
-        # 적 이동 (소수점 계산 후 rect 갱신)
         for enemy in enemies:
-            enemy["exact_x"] += enemy["speed_x"] * time_mult
-            enemy["exact_y"] += enemy["speed_y"] * time_mult
-            enemy["rect"].x = int(enemy["exact_x"])
-            enemy["rect"].y = int(enemy["exact_y"])
+            enemy["rect"].x += enemy["speed_x"]
+            enemy["rect"].y += enemy["speed_y"]
 
-        # 레이저 갱신 (경고/발사 시간도 느리게 감)
         updated_lasers = []
         for laser in lasers:
-            laser["timer"] -= time_mult
+            laser["timer"] -= 1
             if laser["state"] == "WARNING":
                 if laser["timer"] <= 0:
                     laser["state"] = "ACTIVE"
@@ -361,18 +350,17 @@ def main():
                     updated_lasers.append(laser)
         lasers = updated_lasers
 
-        # 충돌 판정 (무적 스킬이 없으므로 항상 맞을 수 있음)
         if invincible > 0:
             invincible -= 1
-        elif shake_timer <= 0: 
+        elif not is_shield_active and shake_timer <= 0: 
             for enemy in enemies:
                 if player.colliderect(enemy["rect"]):
                     lives -= 1
                     invincible = INVINCIBLE_FRAMES
                     enemies.clear()
                     lasers.clear()
-                    slow_gauge = float(MAX_SLOW_GAUGE)
-                    is_slow_overheated = False
+                    shield_gauge = float(MAX_SHIELD_GAUGE)
+                    is_shield_overheated = False
                     if lives <= 0:
                         return game_over_screen(display_score) 
                     break
@@ -384,8 +372,8 @@ def main():
                         invincible = INVINCIBLE_FRAMES
                         enemies.clear()
                         lasers.clear()
-                        slow_gauge = float(MAX_SLOW_GAUGE)
-                        is_slow_overheated = False
+                        shield_gauge = float(MAX_SHIELD_GAUGE)
+                        is_shield_overheated = False
                         if lives <= 0:
                             return game_over_screen(display_score)
                         break
@@ -422,17 +410,18 @@ def main():
             elif laser["state"] == "ACTIVE":
                 pygame.draw.rect(canvas, RED, laser["rect"])
 
-        # 플레이어 깜빡임 (피격 무적 시)
-        blink = (invincible // 10) % 2 == 0
-        if blink:
-            pygame.draw.rect(canvas, BLUE, player) 
+        if is_shield_active:
+            pygame.draw.rect(canvas, YELLOW, player) 
+        else:
+            blink = (invincible // 10) % 2 == 0
+            if blink:
+                pygame.draw.rect(canvas, BLUE, player) 
 
-        # 게이지 그리기 (CYAN 색상)
-        if shift_held or slow_gauge < MAX_SLOW_GAUGE or is_slow_overheated:
+        if shift_held or shield_gauge < MAX_SHIELD_GAUGE or is_shield_overheated:
             gauge_radius = 40 
             gauge_center = (player.centerx, player.centery) 
-            gauge_color = CYAN if not is_slow_overheated else (255, 128, 0)
-            gauge_ratio = slow_gauge / MAX_SLOW_GAUGE
+            gauge_color = YELLOW if not is_shield_overheated else (255, 128, 0)
+            gauge_ratio = shield_gauge / MAX_SHIELD_GAUGE
             
             start_angle = -math.pi / 2
             sweep_angle = gauge_ratio * (2 * math.pi)
@@ -445,12 +434,6 @@ def main():
 
         for enemy in enemies:
             pygame.draw.rect(canvas, RED, enemy["rect"])
-
-        # 슬로우 발동 시 화면에 푸른빛 오버레이 추가
-        if is_slow_active:
-            overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
-            overlay.fill((0, 100, 200, 40)) # 반투명한 파란색
-            canvas.blit(overlay, (0, 0))
 
         draw_hud(canvas, display_score, level_cfg, lives, current_phase)
 

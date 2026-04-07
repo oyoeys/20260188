@@ -31,11 +31,10 @@ MAX_ACTIVE_LASERS = 3
 LASER_THICKNESS = 30        
 LASER_SPAWN_INTERVAL = 180
 
-# --- 슬로우 게이지 설정 ---
-MAX_SLOW_GAUGE = 180
-SLOW_CONSUME_RATE = 1
-SLOW_RECHARGE_RATE = 0.5
-SLOW_TIME_MULTIPLIER = 0.3 # 시간이 30% 속도로 느려짐
+# --- 실드 게이지 설정 ---
+MAX_SHIELD_GAUGE = 180
+SHIELD_CONSUME_RATE = 1
+SHIELD_RECHARGE_RATE = 0.5
 
 # --- 페이즈 구간 설정 ---
 PHASE_MID_THRESHOLD = 50      
@@ -49,15 +48,12 @@ BLUE   = (50,  120, 220)
 RED    = (220, 50,  50)
 YELLOW = (240, 200, 0)
 GRAY   = (40,  40,  40)
-CYAN   = (0,   255, 255) # 슬로우 게이지용 색상
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("Lava Drops")
 clock = pygame.time.Clock()
-
 font = get_korean_font(36)
 font_big = get_korean_font(72)
-font_small = get_korean_font(28) 
 
 LEVELS = [
     {"min_speed": 3, "max_speed": 5,  "spawn": 40, "label": "Lv.1"},
@@ -68,56 +64,18 @@ LEVELS = [
 PLAYER_W, PLAYER_H = 40, 40
 ENEMY_W,  ENEMY_H  = 30, 30
 
-# --- 메인 메뉴 화면 ---
-def main_menu():
-    global screen
-    screen.fill(GRAY)
-    
-    cx = screen.get_width() // 2
-    cy = screen.get_height() // 2
-    
-    title_text = font_big.render("LAVA DROPS", True, RED)
-    start_text = font.render("Press SPACE to Start", True, YELLOW)
-    quit_text = font.render("Press Q to Quit", True, WHITE)
-    
-    # 조작법 텍스트 (회피기 -> 시간 감속)
-    move_text = font_small.render("이동기 : ↑ ← ↓ →  or  WASD", True, WHITE)
-    dodge_text = font_small.render("시간 감속 : SHIFT", True, CYAN)
-    
-    screen.blit(title_text, title_text.get_rect(center=(cx, cy - 120)))
-    screen.blit(start_text, start_text.get_rect(center=(cx, cy - 20)))
-    screen.blit(quit_text, quit_text.get_rect(center=(cx, cy + 30)))
-    
-    screen.blit(move_text, move_text.get_rect(center=(cx, cy + 100)))
-    screen.blit(dodge_text, dodge_text.get_rect(center=(cx, cy + 140)))
-    
-    pygame.display.flip()
-    
-    while True:
-        clock.tick(FPS)
-        for e in pygame.event.get():
-            if e.type == pygame.QUIT:
-                return "QUIT"
-            if e.type == pygame.VIDEORESIZE:
-                screen = pygame.display.set_mode((e.w, e.h), pygame.RESIZABLE)
-                return main_menu() 
-            if e.type == pygame.KEYDOWN:
-                if e.key == pygame.K_SPACE:
-                    return "START" 
-                if e.key == pygame.K_q:
-                    return "QUIT" 
-
-def draw_hud(surface, display_score, level_cfg, lives, current_phase):
+# 인자로 surface를 받도록 수정하여 흔들리는 화면(canvas)에 UI를 그릴 수 있게 함
+def draw_hud(surface, display_score, level_cfg, lives):
     surface.blit(font.render(f"Score: {display_score}", True, WHITE), (10, 10))
     
     phase_text = ""
-    if current_phase == 4:
+    if display_score >= PHASE_ENDLESS_THRESHOLD:
         phase_text = " [ENDLESS]"
-    elif current_phase == 3:
+    elif display_score >= PHASE_LAST_THRESHOLD:
         phase_text = " [LAST PHASE]"
-    elif current_phase == 2:
+    elif display_score >= PHASE_LATE_THRESHOLD:
         phase_text = " [LATE PHASE]"
-    elif current_phase == 1:
+    elif display_score >= PHASE_MID_THRESHOLD:
         phase_text = " [MID PHASE]"
 
     surface.blit(font.render(f"{level_cfg['label']}{phase_text}", True, YELLOW), (10, 40))
@@ -135,7 +93,7 @@ def game_over_screen(display_score):
     
     go_text = font_big.render("GAME OVER", True, RED)
     score_text = font.render(f"Score: {display_score}", True, WHITE)
-    restart_text = font.render("R: Restart   Q: Main Menu", True, WHITE) 
+    restart_text = font.render("R: Restart   Q: Quit", True, WHITE)
     
     screen.blit(go_text, go_text.get_rect(center=(cx, cy - 60)))
     screen.blit(score_text, score_text.get_rect(center=(cx, cy + 10)))
@@ -146,13 +104,13 @@ def game_over_screen(display_score):
         clock.tick(FPS)  
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
-                return "QUIT"
+                return False
             if e.type == pygame.VIDEORESIZE:
                 screen = pygame.display.set_mode((e.w, e.h), pygame.RESIZABLE)
                 return game_over_screen(display_score)
             if e.type == pygame.KEYDOWN:
-                if e.key == pygame.K_r: return "RESTART"
-                if e.key == pygame.K_q: return "MENU"
+                if e.key == pygame.K_r: return True
+                if e.key == pygame.K_q: return False
 
 def main():
     global screen
@@ -164,20 +122,21 @@ def main():
     score = 0.0 
     lives = 3
     level_idx = 0
+    last_tier = 0 # 레벨 업 체크용 티어 변수
     level_cfg = LEVELS[level_idx]
     invincible = 0
-    last_phase = 0 
 
-    v_spawn_timer = 0.0
-    h_spawn_timer = 0.0
-    b_spawn_timer = 0.0 
+    v_spawn_timer = 0
+    h_spawn_timer = 0
+    b_spawn_timer = 0 
 
     lasers = []
-    laser_spawn_timer = 0.0
+    laser_spawn_timer = 0
 
-    slow_gauge = float(MAX_SLOW_GAUGE)
-    is_slow_overheated = False
+    shield_gauge = float(MAX_SHIELD_GAUGE)
+    is_shield_overheated = False
 
+    # 화면 흔들림(화면 지진) 효과 변수
     shake_timer = 0
     shake_magnitude = 0
 
@@ -186,7 +145,7 @@ def main():
 
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
-                return "QUIT"
+                return False
             elif e.type == pygame.VIDEORESIZE:
                 screen = pygame.display.set_mode((e.w, e.h), pygame.RESIZABLE)
 
@@ -196,30 +155,17 @@ def main():
         width_ratio = max(0.1, sw / DEFAULT_WIDTH)
         height_ratio = max(0.1, sh / DEFAULT_HEIGHT)
 
-        level_idx = min(display_score // SCORE_PER_LEVEL, len(LEVELS) - 1)
+        # --- 레벨업 및 지진 효과 처리 ---
+        current_tier = display_score // SCORE_PER_LEVEL
+        if current_tier > last_tier:
+            last_tier = current_tier
+            enemies.clear() # 모든 몹 쓸어버리기
+            lasers.clear()  # 레이저 지워버리기
+            shake_timer = 45 # 0.75초 동안 흔들기
+            shake_magnitude = 20 # 흔들림 강도
+
+        level_idx = min(current_tier, len(LEVELS) - 1)
         level_cfg = LEVELS[level_idx]
-
-        current_phase = 0
-        if display_score >= PHASE_ENDLESS_THRESHOLD:
-            current_phase = 4
-        elif display_score >= PHASE_LAST_THRESHOLD:
-            current_phase = 3
-        elif display_score >= PHASE_LATE_THRESHOLD:
-            current_phase = 2
-        elif display_score >= PHASE_MID_THRESHOLD:
-            current_phase = 1
-
-        if current_phase > last_phase:
-            last_phase = current_phase
-            enemies.clear() 
-            lasers.clear()  
-            shake_timer = 60 
-            shake_magnitude = 30 
-
-        is_phase_mid = current_phase >= 1
-        is_phase_late = current_phase >= 2
-        is_phase_last = current_phase >= 3
-        is_phase_endless = current_phase >= 4
 
         keys = pygame.key.get_pressed()
         mouse_pressed = pygame.mouse.get_pressed()
@@ -227,24 +173,19 @@ def main():
         mouse_right = mouse_pressed[2]
 
         shift_held = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] or mouse_right
-        is_slow_active = False
+        is_shield_active = False
         
-        # 슬로우 게이지 로직
-        if shift_held and not is_slow_overheated and slow_gauge > 0:
-            is_slow_active = True
-            slow_gauge -= SLOW_CONSUME_RATE
-            if slow_gauge <= 0:
-                slow_gauge = 0
-                is_slow_overheated = True
+        if shift_held and not is_shield_overheated and shield_gauge > 0:
+            is_shield_active = True
+            shield_gauge -= SHIELD_CONSUME_RATE
+            if shield_gauge <= 0:
+                shield_gauge = 0
+                is_shield_overheated = True
         else:
-            slow_gauge = min(MAX_SLOW_GAUGE, slow_gauge + SLOW_RECHARGE_RATE)
-            if is_slow_overheated and slow_gauge >= MAX_SLOW_GAUGE:
-                is_slow_overheated = False
-                
-        # 시간에 따른 배율 (슬로우 켜지면 0.3, 꺼지면 1.0)
-        time_mult = SLOW_TIME_MULTIPLIER if is_slow_active else 1.0
+            shield_gauge = min(MAX_SHIELD_GAUGE, shield_gauge + SHIELD_RECHARGE_RATE)
+            if is_shield_overheated and shield_gauge >= MAX_SHIELD_GAUGE:
+                is_shield_overheated = False
         
-        # 플레이어 이동 (플레이어는 시간 감속에 면역!)
         if mouse_left:
             mx, my = pygame.mouse.get_pos()
             px_center = player_x + PLAYER_W / 2
@@ -271,11 +212,17 @@ def main():
         player.x = int(player_x)
         player.y = int(player_y)
 
+        is_phase_mid = display_score >= PHASE_MID_THRESHOLD
+        is_phase_late = display_score >= PHASE_LATE_THRESHOLD
+        is_phase_last = display_score >= PHASE_LAST_THRESHOLD
+        is_phase_endless = display_score >= PHASE_ENDLESS_THRESHOLD
+
         endless_speed_bonus = (display_score - PHASE_ENDLESS_THRESHOLD) * 0.05 if is_phase_endless else 0
 
-        # 스폰 타이머에도 time_mult 반영 (슬로우 시 적 스폰도 느려짐)
+        # 스폰 로직 (화면이 흔들리는 중에는 적을 소환하지 않음)
         if shake_timer <= 0:
-            v_spawn_timer += time_mult
+            # 1. 상단 스폰
+            v_spawn_timer += 1
             base_v_spawn = level_cfg["spawn"]
             if is_phase_last:
                 base_v_spawn *= 4 
@@ -291,14 +238,14 @@ def main():
                 if is_phase_late: speed = max(1, int(speed * 0.5))
                 
                 enemies.append({
-                    "rect": pygame.Rect(x, -ENEMY_H, ENEMY_W, ENEMY_H),
-                    "exact_x": float(x), "exact_y": float(-ENEMY_H), 
+                    "rect": pygame.Rect(x, -ENEMY_H, ENEMY_W, ENEMY_H), 
                     "speed_x": 0, "speed_y": speed,
                     "score_value": 1.0 / width_ratio 
                 })
 
+            # 2. 좌우 스폰
             if is_phase_late:
-                h_spawn_timer += time_mult
+                h_spawn_timer += 1
                 base_h_spawn = level_cfg["spawn"] * 2
                 target_h_spawn = max(1, int(base_h_spawn / height_ratio))
                 
@@ -309,12 +256,13 @@ def main():
                     speed = max(1, int(speed * 0.7)) 
                     
                     if random.choice([True, False]):
-                        enemies.append({"rect": pygame.Rect(-ENEMY_W, y, ENEMY_W, ENEMY_H), "exact_x": float(-ENEMY_W), "exact_y": float(y), "speed_x": speed, "speed_y": 0, "score_value": 1.0 / height_ratio})
+                        enemies.append({"rect": pygame.Rect(-ENEMY_W, y, ENEMY_W, ENEMY_H), "speed_x": speed, "speed_y": 0, "score_value": 1.0 / height_ratio})
                     else:
-                        enemies.append({"rect": pygame.Rect(sw, y, ENEMY_W, ENEMY_H), "exact_x": float(sw), "exact_y": float(y), "speed_x": -speed, "speed_y": 0, "score_value": 1.0 / height_ratio})
+                        enemies.append({"rect": pygame.Rect(sw, y, ENEMY_W, ENEMY_H), "speed_x": -speed, "speed_y": 0, "score_value": 1.0 / height_ratio})
 
+            # 3. 하단 역류 스폰
             if is_phase_last:
-                b_spawn_timer += time_mult
+                b_spawn_timer += 1
                 base_b_spawn = level_cfg["spawn"] * 2
                 target_b_spawn = max(1, int(base_b_spawn / width_ratio))
                 
@@ -324,10 +272,11 @@ def main():
                     speed = random.randint(level_cfg["min_speed"], level_cfg["max_speed"]) + endless_speed_bonus 
                     speed = max(1, int(speed * 0.6))
                     
-                    enemies.append({"rect": pygame.Rect(x, sh, ENEMY_W, ENEMY_H), "exact_x": float(x), "exact_y": float(sh), "speed_x": 0, "speed_y": -speed, "score_value": 1.0 / width_ratio})
+                    enemies.append({"rect": pygame.Rect(x, sh, ENEMY_W, ENEMY_H), "speed_x": 0, "speed_y": -speed, "score_value": 1.0 / width_ratio})
 
+            # 레이저 스폰
             if is_phase_mid:
-                laser_spawn_timer += time_mult
+                laser_spawn_timer += 1
                 if laser_spawn_timer >= LASER_SPAWN_INTERVAL and len(lasers) < MAX_ACTIVE_LASERS:
                     laser_spawn_timer = 0
                     is_horizontal = random.choice([True, False])
@@ -340,17 +289,14 @@ def main():
 
                     lasers.append({"state": "WARNING", "rect": laser_rect, "timer": LASER_WARNING_DURATION})
 
-        # 적 이동 (소수점 계산 후 rect 갱신)
+        # 적 및 레이저 이동
         for enemy in enemies:
-            enemy["exact_x"] += enemy["speed_x"] * time_mult
-            enemy["exact_y"] += enemy["speed_y"] * time_mult
-            enemy["rect"].x = int(enemy["exact_x"])
-            enemy["rect"].y = int(enemy["exact_y"])
+            enemy["rect"].x += enemy["speed_x"]
+            enemy["rect"].y += enemy["speed_y"]
 
-        # 레이저 갱신 (경고/발사 시간도 느리게 감)
         updated_lasers = []
         for laser in lasers:
-            laser["timer"] -= time_mult
+            laser["timer"] -= 1
             if laser["state"] == "WARNING":
                 if laser["timer"] <= 0:
                     laser["state"] = "ACTIVE"
@@ -361,20 +307,21 @@ def main():
                     updated_lasers.append(laser)
         lasers = updated_lasers
 
-        # 충돌 판정 (무적 스킬이 없으므로 항상 맞을 수 있음)
+        # 충돌 처리 (무적 상태 추가 적용: 화면 흔들림 중엔 맞지 않음)
         if invincible > 0:
             invincible -= 1
-        elif shake_timer <= 0: 
+        elif not is_shield_active and shake_timer <= 0: 
             for enemy in enemies:
                 if player.colliderect(enemy["rect"]):
                     lives -= 1
                     invincible = INVINCIBLE_FRAMES
                     enemies.clear()
                     lasers.clear()
-                    slow_gauge = float(MAX_SLOW_GAUGE)
-                    is_slow_overheated = False
+                    shield_gauge = float(MAX_SHIELD_GAUGE)
+                    is_shield_overheated = False
                     if lives <= 0:
-                        return game_over_screen(display_score) 
+                        if game_over_screen(display_score): return True
+                        return False
                     break
             
             if invincible == 0:
@@ -384,12 +331,14 @@ def main():
                         invincible = INVINCIBLE_FRAMES
                         enemies.clear()
                         lasers.clear()
-                        slow_gauge = float(MAX_SLOW_GAUGE)
-                        is_slow_overheated = False
+                        shield_gauge = float(MAX_SHIELD_GAUGE)
+                        is_shield_overheated = False
                         if lives <= 0:
-                            return game_over_screen(display_score)
+                            if game_over_screen(display_score): return True
+                            return False
                         break
 
+        # 밖으로 나간 적 삭제 및 점수 올리기
         survived = []
         for enemy in enemies:
             is_out_of_bounds = False
@@ -410,6 +359,7 @@ def main():
                 
         enemies = survived 
 
+        # 화면 그리기를 위한 도화지(canvas) 생성
         canvas = pygame.Surface((sw, sh))
         canvas.fill(GRAY)
 
@@ -422,17 +372,18 @@ def main():
             elif laser["state"] == "ACTIVE":
                 pygame.draw.rect(canvas, RED, laser["rect"])
 
-        # 플레이어 깜빡임 (피격 무적 시)
-        blink = (invincible // 10) % 2 == 0
-        if blink:
-            pygame.draw.rect(canvas, BLUE, player) 
+        if is_shield_active:
+            pygame.draw.rect(canvas, YELLOW, player) 
+        else:
+            blink = (invincible // 10) % 2 == 0
+            if blink:
+                pygame.draw.rect(canvas, BLUE, player) 
 
-        # 게이지 그리기 (CYAN 색상)
-        if shift_held or slow_gauge < MAX_SLOW_GAUGE or is_slow_overheated:
+        if shift_held or shield_gauge < MAX_SHIELD_GAUGE or is_shield_overheated:
             gauge_radius = 40 
             gauge_center = (player.centerx, player.centery) 
-            gauge_color = CYAN if not is_slow_overheated else (255, 128, 0)
-            gauge_ratio = slow_gauge / MAX_SLOW_GAUGE
+            gauge_color = YELLOW if not is_shield_overheated else (255, 128, 0)
+            gauge_ratio = shield_gauge / MAX_SHIELD_GAUGE
             
             start_angle = -math.pi / 2
             sweep_angle = gauge_ratio * (2 * math.pi)
@@ -446,47 +397,29 @@ def main():
         for enemy in enemies:
             pygame.draw.rect(canvas, RED, enemy["rect"])
 
-        # 슬로우 발동 시 화면에 푸른빛 오버레이 추가
-        if is_slow_active:
-            overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
-            overlay.fill((0, 100, 200, 40)) # 반투명한 파란색
-            canvas.blit(overlay, (0, 0))
+        draw_hud(canvas, display_score, level_cfg, lives)
 
-        draw_hud(canvas, display_score, level_cfg, lives, current_phase)
-
+        # --- 흔들림(화면 셰이크) 효과 적용 ---
         if shake_timer > 0:
+            # 진동 위치 계산
             dx = random.randint(-int(shake_magnitude), int(shake_magnitude))
             dy = random.randint(-int(shake_magnitude), int(shake_magnitude))
             
+            # 뒷배경을 검정으로 칠해서 흔들릴 때 빈 공간 처리
             screen.fill(BLACK) 
             screen.blit(canvas, (dx, dy))
             
             shake_timer -= 1
-            shake_magnitude = max(0, shake_magnitude - 0.5) 
+            shake_magnitude = max(0, shake_magnitude - 0.4) # 흔들림이 서서히 멈추도록
         else:
-            screen.blit(canvas, (0, 0)) 
+            screen.blit(canvas, (0, 0)) # 안 흔들릴 땐 정상 출력
 
         pygame.display.flip()
 
 if __name__ == "__main__":
-    state = "MENU" 
-    
     while True:
-        if state == "MENU":
-            action = main_menu()
-            if action == "QUIT": 
-                break 
-            elif action == "START": 
-                state = "PLAY" 
-                
-        elif state == "PLAY":
-            action = main()
-            if action == "QUIT": 
-                break 
-            elif action == "MENU": 
-                state = "MENU" 
-            elif action == "RESTART": 
-                state = "PLAY" 
-                
+        restart = main()
+        if not restart:  
+            break
     pygame.quit()
     sys.exit()
