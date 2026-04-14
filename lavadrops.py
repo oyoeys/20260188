@@ -4,7 +4,9 @@ import sys
 import math
 import os
 
+# --- 파이게임 및 믹서(오디오) 초기화 ---
 pygame.init()
+pygame.mixer.init()
 
 def get_korean_font(size):
     candidates = ["malgungothic", "applegothic", "nanumgothic", "notosanscjk"]
@@ -49,20 +51,28 @@ BLACK  = (0,   0,   0)
 BLUE   = (50,  120, 220)
 RED    = (220, 50,  50)
 YELLOW = (240, 200, 0)
-ORANGE = (255, 165, 0) # 파티클 효과 기본 색상
+ORANGE = (255, 165, 0) 
 GRAY   = (40,  40,  40)
 CYAN   = (0,   255, 255) 
 GREEN  = (0,   255, 0)
 
+# --- 페이즈별 목표 배경색 (R, G, B) ---
+PHASE_BG_COLORS = {
+    0: (40, 40, 40),   # 기본 회색
+    1: (60, 30, 30),   # 약간 붉은 기운
+    2: (80, 20, 20),   # 붉은색
+    3: (100, 10, 10),  # 짙은 붉은색
+    4: (120, 0, 0)     # 심연의 진홍색 (엔드리스)
+}
+
 screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
-pygame.display.set_caption("Lava Drops - Dev Edition")
+pygame.display.set_caption("Lava Drops - Dynamic BGM Edition")
 clock = pygame.time.Clock()
 
 font = get_korean_font(36)
 font_big = get_korean_font(72)
 font_small = get_korean_font(28) 
 
-# --- [수정됨] 레벨별 속도 증가량을 기존의 25% 수준으로 완만하게 줄였습니다 ---
 LEVELS = [
     {"min_speed": 3, "max_speed": 5,  "spawn": 40, "label": "Lv.1",   "laser_interval": 240, "laser_duration": 300},
     {"min_speed": 4, "max_speed": 6,  "spawn": 25, "label": "Lv.2",   "laser_interval": 180, "laser_duration": 240},
@@ -74,21 +84,16 @@ LEVELS = [
 PLAYER_W, PLAYER_H = 40, 40
 ENEMY_W,  ENEMY_H  = 32, 32  
 
-# --- 캐릭터 이미지 로딩 (수정됨) ---
-# 같은 폴더에 ice.jpg 파일이 있어야 합니다.
+# --- 캐릭터 이미지 로딩 ---
 player_img = None
-CHARACTER_FILE = "ice.jpg"  # 파일 이름을 바꿨습니다.
+CHARACTER_FILE = "ice.jpg"  
 try:
-    # JPG는 투명도를 지원하지 않지만 convert_alpha를 써도 문제는 없습니다.
     img = pygame.image.load(CHARACTER_FILE).convert_alpha()
-    # 이미지를 40x40 크기로 스케일링
     player_img = pygame.transform.scale(img, (PLAYER_W, PLAYER_H))
 except Exception as e:
-    # 이미지를 불러오지 못하면 BLUE 사각형으로 그릴 것이므로 무시
-    print(f"이미지 로딩 실패: {e}")
     pass
 
-# --- 용암 이미지 로딩 (상대 경로 적용) ---
+# --- 용암 이미지 로딩 ---
 lava_images = []
 LAVA_FOLDER = "32x32 Lava Tiles" 
 
@@ -106,6 +111,14 @@ def main_menu():
     input_seq = ""  
     secret_code = "whtjdals"
     
+    # --- [타이틀 BGM] 메인 메뉴 진입 시 재생 ---
+    try:
+        pygame.mixer.music.load("TitleBGM.ogg")
+        pygame.mixer.music.set_volume(0.5)  
+        pygame.mixer.music.play(-1)         
+    except Exception as e:
+        print(f"타이틀 BGM 로딩 실패: {e}")
+        
     while True:
         screen.fill(GRAY)
         cx = screen.get_width() // 2
@@ -172,6 +185,8 @@ def draw_hud(surface, display_score, level_cfg, lives, current_phase):
 
 def game_over_screen(display_score):
     global screen
+    pygame.mixer.music.stop() # 게임 오버 시 BGM 정지
+
     while True:
         screen.fill(GRAY)
         cx = screen.get_width() // 2
@@ -198,6 +213,15 @@ def game_over_screen(display_score):
 
 def main():
     global screen, dev_mode, player_img
+
+    # --- [인게임 BGM 시작] 최초 시작 시 01번(기본속도) BGM 로드 ---
+    try:
+        pygame.mixer.music.load("PlayBGM_Phase_01.ogg")
+        pygame.mixer.music.set_volume(0.5)
+        pygame.mixer.music.play(-1)
+    except Exception as e:
+        print(f"인게임 BGM 로딩 실패: {e}")
+
     player_x = float(screen.get_width() // 2 - PLAYER_W // 2)
     player_y = float(screen.get_height() - 60)
     player = pygame.Rect(int(player_x), int(player_y), PLAYER_W, PLAYER_H)
@@ -223,6 +247,8 @@ def main():
 
     shake_timer = 0
     shake_magnitude = 0
+
+    current_bg_color = list(GRAY)
 
     while True:
         clock.tick(FPS)
@@ -250,6 +276,7 @@ def main():
         elif display_score >= PHASE_LATE_THRESHOLD: current_phase = 2
         elif display_score >= PHASE_MID_THRESHOLD: current_phase = 1
 
+        # --- 페이즈가 변경되었을 때 BGM 교체 ---
         if current_phase > last_phase:
             last_phase = current_phase
             enemies.clear() 
@@ -258,10 +285,24 @@ def main():
             shake_timer = 60 
             shake_magnitude = 30 
 
+            # 현재 페이즈(0~4)에 1을 더해 01~04 형태로 매칭합니다. 최대값은 4로 제한합니다.
+            # 페이즈 1(Mid) -> PlayBGM_Phase_02
+            # 페이즈 2(Last) -> PlayBGM_Phase_03
+            # 페이즈 3(Final) & 페이즈 4(Endless) -> PlayBGM_Phase_04
+            bgm_idx = min(current_phase + 1, 4)
+            try:
+                pygame.mixer.music.load(f"PlayBGM_Phase_0{bgm_idx}.ogg")
+                pygame.mixer.music.set_volume(0.5)
+                pygame.mixer.music.play(-1)
+            except Exception as e:
+                pass # 파일이 없으면 기존 BGM이 유지되거나 조용히 넘어갑니다.
+
         is_phase_mid = current_phase >= 1
         is_phase_late = current_phase >= 2
         is_phase_last = current_phase >= 3
         is_phase_endless = current_phase >= 4
+
+        spawn_modifier = 1.43 if is_phase_mid else 1.0
 
         keys = pygame.key.get_pressed()
         shift_held = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] or pygame.mouse.get_pressed()[2]
@@ -280,6 +321,11 @@ def main():
                 
         time_mult = SLOW_TIME_MULTIPLIER if is_slow_active else 1.0
         
+        target_bg_color = PHASE_BG_COLORS.get(current_phase, GRAY)
+        for i in range(3):
+            current_bg_color[i] += (target_bg_color[i] - current_bg_color[i]) * 0.02 * time_mult
+            current_bg_color[i] = max(0, min(255, current_bg_color[i]))
+
         if pygame.mouse.get_pressed()[0]:
             mx, my = pygame.mouse.get_pos()
             dx, dy = mx - (player_x + PLAYER_W/2), my - (player_y + PLAYER_H/2)
@@ -297,12 +343,11 @@ def main():
         player_y = max(0, min(sh - PLAYER_H, player_y))
         player.topleft = (int(player_x), int(player_y))
 
-        # --- [수정됨] 무한 모드에서의 속도 증가량도 75% 감소 (0.05 -> 0.0125) ---
         endless_speed_bonus = (display_score - PHASE_ENDLESS_THRESHOLD) * 0.0125 if is_phase_endless else 0
 
         if shake_timer <= 0:
             v_spawn_timer += time_mult
-            base_v_spawn = level_cfg["spawn"]
+            base_v_spawn = level_cfg["spawn"] * spawn_modifier
             if is_phase_last: base_v_spawn *= 4 
             elif is_phase_late: base_v_spawn *= 2 
             target_v_spawn = max(1, int(base_v_spawn / width_ratio))
@@ -317,7 +362,7 @@ def main():
 
             if is_phase_late:
                 h_spawn_timer += time_mult
-                target_h_spawn = max(1, int(level_cfg["spawn"] * 2 / height_ratio))
+                target_h_spawn = max(1, int((level_cfg["spawn"] * 2 * spawn_modifier) / height_ratio))
                 if h_spawn_timer >= target_h_spawn:
                     h_spawn_timer = 0
                     y = random.randint(0, sh - ENEMY_H)
@@ -330,7 +375,7 @@ def main():
 
             if is_phase_last:
                 b_spawn_timer += time_mult
-                target_b_spawn = max(1, int(level_cfg["spawn"] * 2 / width_ratio))
+                target_b_spawn = max(1, int((level_cfg["spawn"] * 2 * spawn_modifier) / width_ratio))
                 if b_spawn_timer >= target_b_spawn:
                     b_spawn_timer = 0
                     x = random.randint(0, sw - ENEMY_W)
@@ -426,6 +471,7 @@ def main():
                 lives -= 1; invincible = INVINCIBLE_FRAMES
                 enemies.clear(); lasers.clear(); particles.clear() 
                 slow_gauge = float(MAX_SLOW_GAUGE); is_slow_overheated = False
+                current_bg_color = list(GRAY) 
                 if lives <= 0: return game_over_screen(display_score)
 
         survived = []
@@ -436,7 +482,10 @@ def main():
                 score += e["score_value"]
         enemies = survived
 
-        canvas = pygame.Surface((sw, sh)); canvas.fill(GRAY)
+        canvas = pygame.Surface((sw, sh))
+        
+        bg_tuple = (int(current_bg_color[0]), int(current_bg_color[1]), int(current_bg_color[2]))
+        canvas.fill(bg_tuple)
         
         for l in lasers:
             if l["state"] == "WARNING":
@@ -475,18 +524,14 @@ def main():
         
         canvas.blit(particle_surf, (0, 0))
         
-        # --- 캐릭터 그리기 ---
         should_draw_player = True
-        # 무적 상태일 때 깜빡임 효과
         if invincible > 0 and (invincible // 10) % 2 == 1:
             should_draw_player = False
         
         if should_draw_player:
             if player_img:
-                # 이미지가 있으면 이미지를 그립니다.
                 canvas.blit(player_img, player.topleft)
             else:
-                # 이미지가 없으면 fallback으로 파란 사각형을 그립니다.
                 pygame.draw.rect(canvas, BLUE, player)
         
         if shift_held or slow_gauge < MAX_SLOW_GAUGE or is_slow_overheated:
